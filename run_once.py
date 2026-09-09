@@ -248,6 +248,29 @@ def build_reel(job_id):
     if not os.path.exists(final_video):
         raise Exception("No final video produced")
 
+    # Reels processing frequently rejects video-only files — add a silent
+    # audio track and make the file streaming-friendly (faststart) so
+    # Meta's fetcher can read it reliably.
+    with_audio = f"{OUTPUT_DIR}/with_audio_{job_id}.mp4"
+    result = subprocess.run([
+        "ffmpeg", "-y",
+        "-i", final_video,
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+        "-movflags", "+faststart",
+        with_audio,
+    ], capture_output=True)
+
+    if result.returncode == 0 and os.path.exists(with_audio):
+        try: os.remove(final_video)
+        except: pass
+        final_video = with_audio
+        logger.info("Added silent audio track + faststart")
+    else:
+        logger.info(f"Silent-audio pass failed, posting video-only: {result.stderr.decode()[:300]}")
+
     logger.info(f"Reel built: {final_video}")
     return final_video
 
