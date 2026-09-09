@@ -1,0 +1,47 @@
+name: Post Reel Hourly
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour, on the hour (UTC)
+  workflow_dispatch:        # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write   # needed to create/delete releases and commit state.json
+
+concurrency:
+  group: post-reel
+  cancel-in-progress: false   # never overlap two runs
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25   # safety cap so a stuck run can't bleed into the next hour
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build and post reel
+        run: python run_once.py
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          IG_ACCOUNT_1_ID: ${{ secrets.IG_ACCOUNT_1_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit updated caption state
+        run: |
+          git config user.name "reel-bot"
+          git config user.email "actions@github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "Update caption state [skip ci]"
+          git push
