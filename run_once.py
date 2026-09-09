@@ -401,34 +401,65 @@ def publish_to_instagram(video_url, caption, ig_account_id):
     return publish_resp.json()
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+MAX_ATTEMPTS = 3
 
-def main():
-    job_id = str(random.randint(100000, 999999))
-    state = load_state()
 
-    quote = get_next_caption(state)
-    caption = format_instagram_caption(quote)
-    logger.info(f"Caption: {quote[:60]}...")
-
+def attempt_post(job_id, caption):
+    """One full try: build -> upload -> publish. Returns True on success."""
     video_path = build_reel(job_id)
-
     release_id, tag, video_url = upload_via_github_release(video_path)
     logger.info(f"Uploaded to GitHub release: {video_url}")
-
-    # Give GitHub's CDN a moment before Meta tries to fetch it
-    time.sleep(8)
 
     try:
         result = publish_to_instagram(video_url, caption, IG_ACCOUNT_1_ID)
         logger.info(f"Posted to Instagram: {result}")
+        return True
     finally:
         delete_github_release(release_id, tag)
         try: os.remove(video_path)
         except: pass
 
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+def main():
+    state = load_state()
+    quote = get_next_caption(state)
+    caption = format_instagram_caption(quote)
+    logger.info(f"Caption: {quote[:60]}...")
+
+    last_error = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        job_id = str(random.randint(100000, 999999))
+        # Give GitHub's CDN a little longer to settle on each retry
+        wait_before_publish = 8 + (attempt - 1) * 12
+        try:
+            logger.info(f"Attempt {attempt}/{MAX_ATTEMPTS} (job {job_id})")
+            video_path = build_reel(job_id)
+            release_id, tag, video_url = upload_via_github_release(video_path)
+            logger.info(f"Uploaded to GitHub release: {video_url}")
+            time.sleep(wait_before_publish)
+            try:
+                result = publish_to_instagram(video_url, caption, IG_ACCOUNT_1_ID)
+                logger.info(f"Posted to Instagram: {result}")
+                save_state(state)
+                logger.info("Done.")
+                return
+            finally:
+                delete_github_release(release_id, tag)
+                try: os.remove(video_path)
+                except: pass
+        except Exception as e:
+            last_error = e
+            logger.info(f"Attempt {attempt} failed: {e}")
+            if attempt < MAX_ATTEMPTS:
+                logger.info("Retrying with a freshly built reel...")
+                time.sleep(15)
+
+    # All attempts failed — still save caption state so we don't get stuck
+    # re-trying the exact same caption forever, and surface the real error.
     save_state(state)
-    logger.info("Done.")
+    raise Exception(f"All {MAX_ATTEMPTS} attempts failed. Last error: {last_error}")
 
 
 if __name__ == "__main__":
