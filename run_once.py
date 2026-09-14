@@ -1,3 +1,4 @@
+
 import os
 import re
 import sys
@@ -22,33 +23,28 @@ GITHUB_REPOSITORY = os.environ["GITHUB_REPOSITORY"]  # auto-provided by Actions 
 GRAPH_API = "https://graph.facebook.com/v21.0"
 
 OUTPUT_DIR = "reels_tmp"
-OUTRO_PATH = "outro.mp4"
 STATE_PATH = "state.json"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 PEXELS_HEADERS = {"Authorization": PEXELS_API_KEY}
 
-# Speed multiplier applied to every clip EXCEPT the outro
+# Speed multiplier applied to every clip
 SPEED = 1.5
 
 # ── Source categories (from your Pexels links) ───────────────────────────────
 VIDEO_QUERIES = [
-    "skydiving",
-    "snowboard",
-    "ski pov",
-    "landscape 4k cinematic tropical",
-    "surfing",
+    "tropical cliff",
+    "tropical ocean landscape",
+    "beach 4k drone videos tropical",
 ]
 
 PHOTO_QUERIES = [
-    "surfing",
-    "mountain",
-    "ocean",
-    "skydive",
-    "landscape 4k cinematic tropical",
+    "cinematic 4k landscape tropical",
+    "tropical beach",
+    "tropical cliff",
 ]
 
-# Same clip timing structure as the original automation (totals ~10s + outro)
+# Same clip timing structure as the original automation (totals ~10s)
 CLIP_STRUCTURE = [
     ("photo", 0.1), ("photo", 0.1), ("photo", 0.1), ("photo", 0.1),
     ("photo", 0.1), ("photo", 0.1), ("photo", 0.1), ("photo", 0.1),
@@ -178,23 +174,6 @@ def make_video_clip(job_id, index, duration):
         except: pass
 
 
-def prepare_outro(job_id):
-    if not os.path.exists(OUTRO_PATH):
-        logger.info("Outro file not found — skipping")
-        return None
-    out = f"{OUTPUT_DIR}/outro_prepared_{job_id}.mp4"
-    result = subprocess.run([
-        "ffmpeg", "-y", "-i", OUTRO_PATH,
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
-        "-r", "30", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-        "-an", out,
-    ], capture_output=True)
-    if result.returncode != 0:
-        logger.info(f"Outro prep failed: {result.stderr.decode()}")
-        return None
-    return out
-
-
 def build_reel(job_id):
     logger.info(f"Building reel {job_id}")
     clip_paths = []
@@ -223,27 +202,8 @@ def build_reel(job_id):
         try: os.remove(cp)
         except: pass
 
-    outro = prepare_outro(job_id)
     final_video = f"{OUTPUT_DIR}/final_{job_id}.mp4"
-
-    if outro:
-        result = subprocess.run([
-            "ffmpeg", "-y",
-            "-i", content_video, "-i", outro,
-            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[outv]",
-            "-map", "[outv]",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-an",
-            final_video,
-        ], capture_output=True)
-        try: os.remove(content_video)
-        except: pass
-        try: os.remove(outro)
-        except: pass
-        if result.returncode != 0:
-            logger.info(f"Outro concat failed: {result.stderr.decode()}")
-            os.rename(content_video, final_video) if os.path.exists(content_video) else None
-    else:
-        os.rename(content_video, final_video)
+    os.rename(content_video, final_video)
 
     if not os.path.exists(final_video):
         raise Exception("No final video produced")
@@ -277,43 +237,12 @@ def build_reel(job_id):
 
 # ── Captions ──────────────────────────────────────────────────────────────────
 
-CAPTION_HASHTAGS = "#reels #extremesports #adventure #cinematic #adrenaline"
-
-HARDCODED_CAPTIONS = [
-    "The world keeps moving. Most people forget to look up. Somewhere right now, something breathtaking is happening. Link in bio.",
-    "You were not built for ordinary. Some places exist to remind you what freedom actually feels like. Go find yours. Link in bio.",
-    "Most people spend their whole life scrolling past moments like this. A few choose to live inside them. Link in bio.",
-    "There is a version of your life where you said yes. Where you went. That version starts here. Link in bio.",
-    "Stop waiting for the right time. The tide does not wait. Neither should you. Link in bio.",
-    "Every great story starts with someone who decided enough was enough. Time to write yours. Link in bio.",
-    "Beauty is not scarce. It is everywhere. You just have to slow down long enough to see it. Link in bio.",
-    "People spend thousands chasing moments that already exist right now. Start with one step. Link in bio.",
-    "This is not content. This is a reminder that the world is still magnificent. Link in bio.",
-    "Nobody on their last day wishes they had worked more. Link in bio.",
-    "You were made for open spaces. Your body knows this even when your mind forgets. Link in bio.",
-    "Adventure is not a destination. It is a decision you make before you even leave the house. Link in bio.",
-    "The version of you that took the trip, said yes, chose the jump — that version never regretted it. Link in bio.",
-    "Somewhere right now someone is standing exactly where you want to be. The only difference is they went. Link in bio.",
-    "You do not need permission to want more from your life. Go see it. Link in bio.",
-]
+CAPTION_HASHTAGS = "#cinematic #cinematicvideo #reels #nature"
+FIXED_CAPTION = "📸"
 
 
-def get_next_caption(state):
-    used = set(state.get("used_captions", []))
-    available = [c for c in HARDCODED_CAPTIONS if c not in used]
-    if not available:
-        state["used_captions"] = []
-        available = HARDCODED_CAPTIONS
-    caption = random.choice(available)
-    state.setdefault("used_captions", []).append(caption)
-    return caption
-
-
-def format_instagram_caption(quote):
-    body = re.sub(r"[Ll]ink in [Bb]io\.?\s*$", "", quote).strip()
-    sentences = re.split(r"(?<=[.!?])\s+", body)
-    formatted = "\n".join(s for s in sentences if s.strip())
-    return f"link in bio 📷\n\n{formatted}\n\n{CAPTION_HASHTAGS}"
+def format_instagram_caption():
+    return f"{FIXED_CAPTION}\n\n{CAPTION_HASHTAGS}"
 
 
 # ── GitHub release hosting ────────────────────────────────────────────────────
@@ -424,9 +353,8 @@ def attempt_post(job_id, caption):
 
 def main():
     state = load_state()
-    quote = get_next_caption(state)
-    caption = format_instagram_caption(quote)
-    logger.info(f"Caption: {quote[:60]}...")
+    caption = format_instagram_caption()
+    logger.info(f"Caption: {caption[:60]}...")
 
     last_error = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
